@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 @Slf4j
 @Configuration
-public class RedissonConfig {
+public class  RedissonConfig {
 
     private static final long RECONNECT_INTERVAL_MILLIS = 5000L;
 
