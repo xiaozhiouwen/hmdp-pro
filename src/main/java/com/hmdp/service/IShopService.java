@@ -18,5 +18,10 @@ public interface IShopService extends IService<Shop> {
 
     Result update(Shop shop);
 
-    Result queryShopByType(Integer typeId, Integer current, Double x, Double y);
+    Result queryShopByType(Integer typeId, Integer current, Double x, Double y, String sortBy);
+
+    /**
+     * 查询商户 UV（HyperLogLog 统计的独立访客数）
+     */
+    Result queryShopUV(Long shopId);
 }

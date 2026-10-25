@@ -2,12 +2,16 @@ package com.hmdp.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.dto.NotifyDTO;
 import com.hmdp.dto.Result;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Follow;
+import com.hmdp.entity.User;
 import com.hmdp.mapper.FollowMapper;
 import com.hmdp.service.IFollowService;
+import com.hmdp.service.INotifyService;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.UserHolder;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -15,7 +19,9 @@ import org.springframework.stereotype.Service;
 
 import javax.annotation.Resource;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -30,10 +36,20 @@ import java.util.stream.Collectors;
 @Service
 public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> implements IFollowService {
 
+    /** 列表类型：1-我关注的人 */
+    private static final int TYPE_FOLLOW = 1;
+    /** 列表类型：2-我的粉丝 */
+    private static final int TYPE_FANS = 2;
+    /** 列表分页大小 */
+    private static final int PAGE_SIZE = 10;
+
     @Resource
     private StringRedisTemplate stringRedisTemplate;
     @Resource
     private IUserService userService;
+
+    @Resource
+    private INotifyService notifyService;
 
     @Override
     public Result follow(Long followUserId, Boolean isFollow) {
@@ -50,6 +66,18 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             if (isSuccess) {
                 // 把关注用户的id，放入redis的set集合 sadd userId followerUserId
                 stringRedisTemplate.opsForSet().add(key, followUserId.toString());
+                // 给被关注者推送关注通知
+                User user = userService.getById(userId);
+                NotifyDTO notify = new NotifyDTO();
+                notify.setType(NotifyDTO.TYPE_FOLLOW);
+                notify.setBizId(userId);
+                notify.setFromUserId(userId);
+                if (user != null) {
+                    notify.setFromName(user.getNickName());
+                    notify.setFromIcon(user.getIcon());
+                }
+                notify.setCreateTime(System.currentTimeMillis());
+                notifyService.pushNotify(followUserId, notify);
             }
         } else {
             // 3.取关，删除 delete from tb_follow where user_id = ? and follow_user_id = ?
@@ -88,6 +116,44 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         // 3.解析id集合
         List<Long> ids = intersect.stream().map(Long::valueOf).collect(Collectors.toList());
         // 4.查询用户
+        List<UserDTO> users = userService.listByIds(ids)
+                .stream()
+                .map(user -> BeanUtil.copyProperties(user, UserDTO.class))
+                .collect(Collectors.toList());
+        return Result.ok(users);
+    }
+
+    @Override
+    public Result followCount(Long userId) {
+        // 我关注的人
+        long followCount = query().eq("user_id", userId).count();
+        // 关注我的人
+        long fansCount = query().eq("follow_user_id", userId).count();
+        Map<String, Object> map = new HashMap<>(2);
+        map.put("followCount", followCount);
+        map.put("fansCount", fansCount);
+        return Result.ok(map);
+    }
+
+    @Override
+    public Result followList(Long userId, Integer type, Integer current) {
+        if (current == null || current < 1) {
+            current = 1;
+        }
+        Page<Follow> page = new Page<>(current, PAGE_SIZE);
+        List<Long> ids;
+        if (TYPE_FANS == type) {
+            // 粉丝：关注了我的人
+            ids = query().eq("follow_user_id", userId).page(page).getRecords()
+                    .stream().map(Follow::getUserId).collect(Collectors.toList());
+        } else {
+            // 关注：我关注的人
+            ids = query().eq("user_id", userId).page(page).getRecords()
+                    .stream().map(Follow::getFollowUserId).collect(Collectors.toList());
+        }
+        if (ids.isEmpty()) {
+            return Result.ok(Collections.emptyList());
+        }
         List<UserDTO> users = userService.listByIds(ids)
                 .stream()
                 .map(user -> BeanUtil.copyProperties(user, UserDTO.class))

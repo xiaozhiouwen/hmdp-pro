@@ -36,6 +36,16 @@ public class ShopController {
     }
 
     /**
+     * 查询商户独立访客数（HyperLogLog）
+     * @param id 商铺id
+     * @return UV 数量
+     */
+    @GetMapping("/uv/{id}")
+    public Result queryShopUV(@PathVariable("id") Long id) {
+        return shopService.queryShopUV(id);
+    }
+
+    /**
      * 新增商铺信息
      * @param shop 商铺数据
      * @return 商铺id
@@ -70,9 +80,10 @@ public class ShopController {
             @RequestParam("typeId") Integer typeId,
             @RequestParam(value = "current", defaultValue = "1") Integer current,
             @RequestParam(value = "x", required = false) Double x,
-            @RequestParam(value = "y", required = false) Double y
+            @RequestParam(value = "y", required = false) Double y,
+            @RequestParam(value = "sortBy", required = false) String sortBy
     ) {
-       return shopService.queryShopByType(typeId, current, x, y);
+       return shopService.queryShopByType(typeId, current, x, y, sortBy);
     }
 
     /**

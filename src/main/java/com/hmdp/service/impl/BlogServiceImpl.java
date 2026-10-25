@@ -4,6 +4,7 @@ import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.dto.NotifyDTO;
 import com.hmdp.dto.Result;
 import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
@@ -13,6 +14,7 @@ import com.hmdp.entity.User;
 import com.hmdp.mapper.BlogMapper;
 import com.hmdp.service.IBlogService;
 import com.hmdp.service.IFollowService;
+import com.hmdp.service.INotifyService;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
@@ -49,6 +51,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Resource
     private IFollowService followService;
+
+    @Resource
+    private INotifyService notifyService;
 
     @Override
     public Result queryHotBlog(Integer current) {
@@ -108,6 +113,8 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             // 3.2.保存用户到Redis的set集合  zadd key value score
             if (isSuccess) {
                 stringRedisTemplate.opsForZSet().add(key, userId.toString(), System.currentTimeMillis());
+                // 新点赞，给笔记作者推送通知
+                pushLikeNotify(id, userId);
             }
         } else {
             // 4.如果已点赞，取消点赞
@@ -119,6 +126,29 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             }
         }
         return Result.ok();
+    }
+
+    /**
+     * 点赞成功后，给笔记作者推送一条点赞通知
+     */
+    private void pushLikeNotify(Long blogId, Long fromUserId) {
+        Blog blog = getById(blogId);
+        if (blog == null || fromUserId.equals(blog.getUserId())) {
+            // 笔记不存在，或给自己点赞，不推送
+            return;
+        }
+        User user = userService.getById(fromUserId);
+        NotifyDTO notify = new NotifyDTO();
+        notify.setType(NotifyDTO.TYPE_LIKE);
+        notify.setBizId(blogId);
+        notify.setFromUserId(fromUserId);
+        if (user != null) {
+            notify.setFromName(user.getNickName());
+            notify.setFromIcon(user.getIcon());
+        }
+        notify.setContent(StrUtil.blankToDefault(blog.getTitle(), StrUtil.sub(blog.getContent(), 0, 20)));
+        notify.setCreateTime(System.currentTimeMillis());
+        notifyService.pushNotify(blog.getUserId(), notify);
     }
 
     @Override
@@ -147,6 +177,18 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         // 1.获取登录用户
         UserDTO user = UserHolder.getUser();
         blog.setUserId(user.getId());
+        // 1.1.内容为空直接拦下（数据库 content 为 NOT NULL）
+        if (StrUtil.isBlank(blog.getContent())) {
+            return Result.fail("笔记内容不能为空！");
+        }
+        // 1.2.未关联商户时存 0（tb_blog.shop_id 为 NOT NULL）
+        if (blog.getShopId() == null) {
+            blog.setShopId(0L);
+        }
+        // 1.3.未填标题时用正文前 20 字兜底（tb_blog.title 为 NOT NULL）
+        if (StrUtil.isBlank(blog.getTitle())) {
+            blog.setTitle(StrUtil.sub(blog.getContent(), 0, 20));
+        }
         // 2.保存探店笔记
         boolean isSuccess = save(blog);
         if(!isSuccess){
